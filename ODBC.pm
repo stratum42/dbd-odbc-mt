@@ -37,10 +37,10 @@ $DBD::ODBC::VERSION = '1.62_1';
 
     bootstrap DBD::ODBC $VERSION;
 
-    $err = 0;                   # holds error code   for DBI::err
-    $errstr = q{};              # holds error string for DBI::errstr
-    $sqlstate = "00000";        # starting state
-    $drh = undef;               # holds driver handle once initialised
+    our $err = 0;               # holds error code   for DBI::err
+    our $errstr = q{};          # holds error string for DBI::errstr
+    our $sqlstate = "00000";    # starting state
+    our $drh = undef;           # holds driver handle once initialised
 
     use constant {
         # header fields in SQLGetDiagField:
@@ -94,7 +94,7 @@ $DBD::ODBC::VERSION = '1.62_1';
         return DBI::parse_trace_flags($class, $flags);
     }
 
-    my $methods_are_installed = 0;
+    our $methods_are_installed = 0;
     sub driver{
         return $drh if $drh;
         my($class, $attr) = @_;

@@ -10,6 +10,7 @@ fixup_t.h
 FAQ
 Makefile.PL
 MANIFEST			This list of files
+MT_README.md			perl5-mt Tier 1 support notes and caveats
 META.yml
 test_results.txt
 examples/backup_restore.pl

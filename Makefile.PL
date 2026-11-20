@@ -181,6 +181,27 @@ Getopt::Long::GetOptions(@options) or die "Invalid arguments\n";
 
 print "Command line options:\n",
     (map {"  $_ = " . (defined(${$options{$_}}) ? ${$options{$_}} : 'undef') . "\n"} keys %options), "\n";
+my $is_perl5_mt = 0;
+if (!$ENV{PERL_DBI_NO_MT}) {
+    if (eval { require MT; 1 }) {
+        $is_perl5_mt = 1;
+    } elsif ($Config{archlibexp} && open(my $xfh, '<', "$Config{archlibexp}/CORE/XSUB.h")) {
+        while (my $line = <$xfh>) {
+            if ($line =~ /PERL_XS_THREADSAFE/) {
+                $is_perl5_mt = 1;
+                last;
+            }
+        }
+        close $xfh;
+    }
+}
+if ($is_perl5_mt) {
+    print "Detected perl5-mt: enabling Tier 1 -DPERL_XS_THREADSAFE=1\n";
+    $opts{DEFINE} .= ' -DPERL_XS_THREADSAFE=1';
+}
+
+my $non_interactive = $is_perl5_mt || !-t STDIN || $ENV{PERL_MM_USE_DEFAULT} || $ENV{AUTOMATED_TESTING};
+
 if (($ENV{LANG} || q{}) =~ m/utf-?8/i) {
     print <<"EOT";
 
@@ -190,7 +211,7 @@ this Makefile.PL from running without errors. If you have problems please
 try re-running with LANG unset or with the utf part of LANG removed.
 
 EOT
-    sleep 4;
+    sleep 4 unless $non_interactive;
 }
 
 if ($Config{useithreads}) {
@@ -209,7 +230,7 @@ EOT
     }
     # see rt 46944 for why the following was suggested to be commented
     # out which I rejected as PERL_MM_USE_DEFAULT can be used
-    prompt("Press return to continue...");
+    prompt("Press return to continue...") unless $non_interactive;
 }
 print "Overriding ODBC Directory with command line option: $opt_o\n"
     if $opt_o ;
@@ -357,6 +378,18 @@ EOT
             chomp($odbchome = `cygpath \$WINDIR`);
         } elsif (-f '/opt/sapdb/interfaces/odbc/lib/libsqlod.a') {
             $odbchome = '/opt/sapdb/interfaces/odbc/';
+        } elsif ($OSNAME eq 'darwin') {
+            for my $cand (qw(
+                /opt/homebrew/opt/unixodbc
+                /usr/local/opt/unixodbc
+                /opt/homebrew/opt/libiodbc
+                /usr/local/opt/libiodbc
+            )) {
+                if (-d $cand && -f File::Spec->catfile($cand, 'include', 'sql.h')) {
+                    $odbchome = $cand;
+                    last;
+                }
+            }
         }
     }
     if ($OSNAME eq 'cygwin'){   #Trade cygwin as MSWin.
@@ -1068,6 +1101,8 @@ sub find_dm_hdr_files
     push @hdrstofind, 'sqlucode.h' if $opt_u;
 
     my @paths = ('/usr', '/usr/local', '/usr/pkg',
+                 '/opt/homebrew/opt/unixodbc', '/opt/homebrew',
+                 '/usr/local/opt/unixodbc', '/opt/homebrew/opt/libiodbc',
                  '/usr/local/easysoft/unixODBC');
     unshift @paths, $opt_o if $opt_o;
     unshift @paths, $ENV{ODBCHOME} if $ENV{ODBCHOME};

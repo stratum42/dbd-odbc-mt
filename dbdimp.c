@@ -103,7 +103,7 @@ static SQLSMALLINT default_parameter_type(
 static int post_connect(pTHX_ SV *dbh, imp_dbh_t *imp_dbh, SV *attr);
 static int set_odbc_version(pTHX_ SV *dbh, imp_dbh_t *imp_dbh, SV* attr);
 static const char *S_SqlTypeToString (SWORD sqltype);
-static const char *S_SqlCTypeToString (SWORD sqltype);
+static const char *S_SqlCTypeToString (SWORD sqltype, char *buf, size_t buflen);
 static const char *cSqlTables = "SQLTables(%s,%s,%s,%s)";
 static const char *cSqlPrimaryKeys = "SQLPrimaryKeys(%s,%s,%s)";
 static const char *cSqlStatistics = "SQLStatistics(%s,%s,%s,%d,%d)";
@@ -1714,12 +1714,12 @@ int dbd_st_tables(
     if (SvOK(catalog)) acatalog = SvPV_nolen(catalog);
     if (!imp_dbh->catalogs_supported) {
         acatalog = NULL;
-        *catalog = PL_sv_undef;
+        catalog = &PL_sv_undef;
     }
     if (SvOK(schema)) aschema = SvPV_nolen(schema);
     if (!imp_dbh->schema_usage) {
         aschema = NULL;
-        *schema = PL_sv_undef;
+        schema = &PL_sv_undef;
     }
 
     if (SvOK(table)) atable = SvPV_nolen(table);
@@ -2327,9 +2327,8 @@ static const char *S_SqlTypeToString (SWORD sqltype)
 
 
 
-static const char *S_SqlCTypeToString (SWORD sqltype)
+static const char *S_SqlCTypeToString (SWORD sqltype, char *buf, size_t buflen)
 {
-   static char s_buf[100];
 #define s_c(x) case x: return #x
    switch(sqltype) {
       s_c(SQL_C_CHAR);
@@ -2362,8 +2361,11 @@ static const char *S_SqlCTypeToString (SWORD sqltype)
       s_c(SQL_C_TYPE_TIMESTAMP);
    }
 #undef s_c
-   my_snprintf(s_buf, sizeof(s_buf), "(CType %d)", sqltype);
-   return s_buf;
+   if (buf && buflen > 0) {
+      my_snprintf(buf, buflen, "(CType %d)", sqltype);
+      return buf;
+   }
+   return "(unknown CType)";
 }
 
 
@@ -4277,6 +4279,7 @@ static int rebind_param(
           (d_digits != phs->bp_d_digits) ||
           (buffer_length != phs->bp_buffer_length)))) {
         if (DBIc_TRACE(imp_sth, DBD_TRACING, 0, 5)) {
+            char ctype_buf[64];
             PerlIO_printf(
                 DBIc_LOGPIO(imp_dbh),
                 "    SQLBindParameter: idx=%d: io_type=%d, name=%s, "
@@ -4284,7 +4287,7 @@ static int rebind_param(
                 "d_digits=%d, value_ptr=%p, buffer_length=%ld, ind=%ld, "
                 "param_size=%lu\n",
                 phs->idx, param_io_type, phs->name,
-                value_type, S_SqlCTypeToString(value_type),
+                value_type, S_SqlCTypeToString(value_type, ctype_buf, sizeof(ctype_buf)),
                 phs->sql_type, S_SqlTypeToString(phs->sql_type),
                 (unsigned long)column_size, d_digits, value_ptr,
                 (long)buffer_length, (long)strlen_or_ind,
@@ -4672,7 +4675,7 @@ typedef struct {
    UDWORD afalse;
 } db_params;
 
-static db_params S_db_options[] =  {
+static const db_params S_db_options[] =  {
    { "AutoCommit", SQL_AUTOCOMMIT, PARAM_READWRITE, PARAM_TYPE_BOOL, SQL_AUTOCOMMIT_ON, SQL_AUTOCOMMIT_OFF },
    { "ReadOnly", SQL_ATTR_ACCESS_MODE, PARAM_READWRITE, PARAM_TYPE_BOOL, SQL_MODE_READ_ONLY, SQL_MODE_READ_WRITE},
    { "RowCacheSize", ODBC_ROWCACHESIZE, PARAM_READ, PARAM_TYPE_CUSTOM },
@@ -5323,7 +5326,7 @@ typedef struct {
 } T_st_params;
 
 #define s_A(str,need_describe) { str, sizeof(str)-1,0,need_describe }
-static T_st_params S_st_fetch_params[] =
+static const T_st_params S_st_fetch_params[] =
 {
    s_A("NUM_OF_PARAMS",1),	/* 0 */
    s_A("NUM_OF_FIELDS",1),	/* 1 */
@@ -5352,7 +5355,7 @@ static T_st_params S_st_fetch_params[] =
    s_A("",0),			/* END */
 };
 
-static T_st_params S_st_store_params[] =
+static const T_st_params S_st_store_params[] =
 {
    s_A("odbc_ignore_named_placeholders",0),	/* 0 */
    s_A("odbc_default_bind_type",0),	/* 1 */
@@ -5382,7 +5385,7 @@ SV *dbd_st_FETCH_attrib(SV *sth, imp_sth_t *imp_sth, SV *keysv)
    char *key = SvPV(keysv,kl);
    int i;
    SV *retsv = NULL;
-   T_st_params *par;
+   const T_st_params *par;
    char cursor_name[256];
    SWORD cursor_name_len;
    RETCODE rc;
@@ -5626,7 +5629,7 @@ int dbd_st_STORE_attrib(SV *sth, imp_sth_t *imp_sth, SV *keysv, SV *valuesv)
     dTHX;
     STRLEN kl;
     char *key = SvPV(keysv,kl);
-    T_st_params *par;
+    const T_st_params *par;
 
     for (par = S_st_store_params; par->len > 0; par++)
         if (par->len == kl && strEQ(key, par->str))
@@ -7294,15 +7297,17 @@ IV odbc_st_execute_for_fetch(
             phs->strlen_or_ind_array = (SQLLEN *)safemalloc(count * 2 * sizeof(SQLLEN));
         }
         get_param_type(sth, imp_sth, imp_dbh, phs);
-        if (DBIc_TRACE(imp_sth, DBD_TRACING, 0, 4))
+        if (DBIc_TRACE(imp_sth, DBD_TRACING, 0, 4)) {
+            char ctype_buf[64];
             PerlIO_printf(DBIc_LOGPIO(imp_sth),
                           "    PARAM name=%s sv=%p idx=%u vt=%d (%s) svt=%d (%s) buf=%p ps=%lu dpc=%d dps=%d ml=%"IVdf" dst=%d\n",
                           phs->name, phs->sv, phs->idx, phs->value_type,
-                          S_SqlCTypeToString(phs->value_type),
+                          S_SqlCTypeToString(phs->value_type, ctype_buf, sizeof(ctype_buf)),
                           phs->sql_type, S_SqlTypeToString(phs->sql_type),
                           phs->param_array_buf, phs->param_size,
                           phs->describe_param_called, phs->describe_param_status,
                           phs->maxlen, phs->described_sql_type);
+        }
 #if defined(WITH_UNICODE)
         rc = SQLBindParameter(imp_sth->hstmt,
                               p, SQL_PARAM_INPUT, SQL_C_WCHAR,

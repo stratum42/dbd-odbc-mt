@@ -169,6 +169,7 @@ SV *sv_newwvn(pTHX_ UTF16 * wp, STRLEN len)
  */
 UTF16 * WValloc(char * s)
 {
+    dTHX;
     UTF16 * buf=NULL;
     if (NULL!=s) {
 #ifdef WIN32
@@ -242,6 +243,7 @@ UTF16 * WValloc(char * s)
  */
 void WVfree(UTF16 * wp)
 {
+    dTHX;
     if (wp != NULL) Safefree(wp);
 }
 
@@ -257,6 +259,7 @@ void WVfree(UTF16 * wp)
 
 char * PVallocW(UTF16 * wp)
 {
+    dTHX;
     char * p=NULL;
 
     if (wp!=NULL) {
@@ -333,6 +336,7 @@ char * PVallocW(UTF16 * wp)
  */
 void PVfreeW(char * s)
 {
+    dTHX;
     if (s!=NULL) Safefree(s);
 }
 
