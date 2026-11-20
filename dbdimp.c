@@ -3475,8 +3475,13 @@ AV *dbd_st_fetch(SV *sth, imp_sth_t *imp_sth)
                     if (DBIc_TRACE(imp_sth, DBD_TRACING, 0, 5))
                         TRACE0(imp_sth, "    chopping blanks\n");
 
+#ifdef DBI_ARCH_H
+                    fbh->datalen = (SQLLEN)dbi_rtrim_spaces_len(
+                        p, (STRLEN)fbh->datalen, dbi_arch_force_scalar());
+#else
                     while(fbh->datalen && p[fbh->datalen - 1]==' ')
                         --fbh->datalen;
+#endif
                 }
                 sv_setpvn(sv, (char*)fbh->data, fbh->datalen);
                 if (imp_sth->odbc_utf8_on && fbh->ftype != SQL_C_BINARY ) {
