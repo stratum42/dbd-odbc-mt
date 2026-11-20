@@ -1,149 +1,67 @@
-# DBD::ODBC -- DBD module interfacing the ODBC databases.
+# DBD::ODBC for perl5-mt
 
-[![build](https://github.com/perl5-dbi/DBD-ODBC/actions/workflows/action.yml/badge.svg?branch=master)](https://github.com/perl5-dbi/DBD-ODBC/actions)
-[![CPAN version](https://badge.fury.io/pl/DBD-ODBC.svg)](http://badge.fury.io/pl/DBD-ODBC)
-[![CPANTS](http://cpants.cpanauthors.org/dist/DBD-ODBC.png)](http://cpants.cpanauthors.org/dist/DBD-ODBC)
+This repository carries a small set of changes on top of upstream
+[DBD::ODBC](https://github.com/perl5-dbi/DBD-ODBC) so that it can build and
+run in-process (Tier 1) across
+[`perl5-mt`](https://github.com/stratum42/perl5-mt) worker threads, while
+remaining compatible with stock Perl 5.
 
-See [LICENSE-AND-COPYRIGHT](https://metacpan.org/pod/DBD::ODBC#LICENSE-AND-COPYRIGHT)
-section in ODBC.pm for usage and distribution rights.
+DBD::ODBC is the work of Jeff Urlwin, Martin J. Evans, Wesley Hinds, Tim Bunce,
+and many contributors over the years. Upstream history is left untouched. For
+the original upstream DBD::ODBC build, testing, and support notes, see
+[README.upstream.md](README.upstream.md) (and [README](README)).
 
-# DEPENDENCIES
+## What Changed and Why
 
-    Build, test and install Perl 5 (as per DBI specifications/compatibility)
-    It is very important to TEST it and INSTALL it.
+- **`Makefile.PL`**:
+  - Detects `perl5-mt` and appends `-DPERL_XS_THREADSAFE=1` unless
+    `PERL_DBI_NO_MT=1` is set.
+  - Skips interactive `prompt()` and `sleep 4` pauses when running
+    non-interactively or under `perl5-mt`.
+  - Adds macOS Homebrew search paths (`/opt/homebrew/opt/unixodbc`,
+    `/usr/local/opt/unixodbc`, `libiodbc`) for ODBC header and library
+    discovery.
+- **`dbdimp.c` and `unicode_helper.c`**:
+  - Removes the mutable `static char s_buf[100]` buffer in
+    `S_SqlCTypeToString()` in favor of a caller-provided stack buffer.
+  - Marks the read-only lookup tables `S_db_options`, `S_st_fetch_params`, and
+    `S_st_store_params` as `static const`.
+  - Adds `dTHX;` to `WValloc`, `WVfree`, `PVallocW`, and `PVfreeW` in
+    `unicode_helper.c` so `PERL_NO_GET_CONTEXT` builds cleanly.
+  - Fixes `dbd_st_tables()` where `*catalog = PL_sv_undef; *schema =
+    PL_sv_undef;` overwrote caller SV structs instead of reassigning the local
+    pointers (`catalog = &PL_sv_undef; schema = &PL_sv_undef;`), which could
+    corrupt SV refcounts during `$dbh->ping()` and stall interpreter teardown.
+  - Wires `dbi_rtrim_spaces_len()` from `dbi_arch.h` into `ChopBlanks` in
+    `dbd_st_fetch()` when available, honoring `dbi_arch_force_scalar()`.
+- **`ODBC.pm`**:
+  - Declares `$err`, `$errstr`, `$sqlstate`, `$drh`, and
+    `$methods_are_installed` with `our` so worker interpreters get isolated
+    package state after `MT::Image::freeze()` and `CLONE()`.
 
-    Build, test and install the DBI module (at least DBI 1.609).
-    It is very important to TEST it and INSTALL it.
+## Caveats
 
-    Remember to *read* the DBD::ODBC.pm POD documentation and the
-    DBD::ODBC::Changes.pm POD documentation.
+- Thread safety in ODBC depends on both the ODBC driver manager (such as
+  unixODBC or iODBC) and the underlying database ODBC driver. If a particular
+  third-party ODBC driver is not thread-safe, build with `PERL_DBI_NO_MT=1` so
+  `perl5-mt` runs it in an isolated Tier 2 compartment instead.
+- Each `MT::Worker` must open and manage its own database handles.
 
-# BUILDING:
+## Building
 
-  set-up these environment variables:
+```sh
+/path/to/perl5-mt -I/path/to/dbi-mt/blib/lib -I/path/to/dbi-mt/blib/arch Makefile.PL
+make
+```
 
-    DBI_DSN   The dbi data source, e.g. 'dbi:ODBC:YOUR_DSN_HERE'
+## Related Repositories
 
-    DBI_USER  The username to use to connect to the database
+- [`stratum42/perl5-mt`](https://github.com/stratum42/perl5-mt) — Multi-threaded Perl 5 runtime
+- [`stratum42/dbi-mt`](https://github.com/stratum42/dbi-mt) — `DBI` with Tier 1 support, `DBI::MT::Pool`, and `dbi_arch.h`
+- [`stratum42/dbi-mt-bench`](https://github.com/stratum42/dbi-mt-bench) — Benchmarks and reproducibility harness
 
-    DBI_PASS  The username to use to connect to the database
+## Upstream Documentation
 
-    ODBCHOME  (Unix only) The dir your driver manager is installed in
-              or specify this via -o argument to Makefile.PL
-
-    DBD_ODBC_UNICODE Any value here will set the default install to
-                     attempt to turn on UNICODE support.
-
-  If you want UNICODE support on non-Windows platforms specify -u
-  switch to Makefile.PL. If you don't want UNICODE support on Windows
-  specify the -nou switch to Makefile.PL. On non-Windows platforms all
-  UNICODE features will work correctly with the unixODBC driver
-  manager.
-
-  If the Makefile.PL finds iODBC and you would prefer to build with
-  unixODBC you can use the -x switch to favor unixODBC. This only
-  happens in rare case where you have binary packages of both
-  installed but you can only have development packages on one
-  installed and DBD::ODBC locates iODBC first. This quite often
-  happens on Ubuntu and other Debian based Linux systems where an
-  incomplete iODBC is often installed.
-
-  perl Makefile.PL
-
-  make                (or nmake/dmake, if VC++ on Win32)
-
-  make test           (or nmake/dmake, if VC++ on Win32)
-
-# TESTING
-
-  make test
-
-  make test TEST_VERBOSE=1   (if any of the t/* tests fail)
-
-  make install               (if the tests look okay)
-
-  Note that the tests currently all pass when using the Microsoft SQL
-  server driver up to SQL Server 2008 and many other ODBC drivers on
-  Windows and UNIX (too numerous to mention here).
-
-  To run an individual test use:
-
-  prove -vb t/test.t
-
-  If the tests from t/09bind.t fail, that is an indication of lack of
-  ODBC Level 2 functionality.  This does not (necessarily) mean that
-  your installation is broken.  It does indicate that your ODBC driver
-  does not support certain level 2 calls (see below).  All other tests
-  should pass, however, since I've tested with a limited number of
-  ODBC drivers, I could have something wrong in the test.  Please
-  notify me if you have an incompatibility in the other tests.  (For
-  example, some Paradox ODBC drivers *could* fail, if they don't
-  support long file names, since in Paradox file names are
-  tableName.db.).  Please let me know about any incompatibilities you
-  encounter. I will say, though, that I may not be able to reproduce
-  or fix problems without some help, since I can't possibly install
-  all the known ODBC drivers.  Please try to "solve" the problem, in
-  addition to discovering it.
-
-  If any of the tests fail and you are using SQL Server and Windows drivers,
-  ensure you updated to MDAC 2.7 or later.
-
-# NOTES on ODBC Drivers and Compatibility with DBD-ODBC
-
-  This version utilizes at least one "Level 2" ODBC call
-  (SQLDescribeParam).  This *will* affect compatibility with specific
-  ODBC drivers.  If the driver is not level 2 (or does not support the
-  level 2 function(s) required), then full compatibility will not be
-  available. The best thing to do is build DBD::ODBC against an ODBC
-  driver manager like unixODBC (http://www.unixodbc.org) as it will
-  resolve many incompatibilities between ODBC versions for you.
-
-# IF YOU HAVE PROBLEMS:
-
-  Do not hand edit the generated Makefile unless you are completely
-  sure you understand the implications! Always try to make changes via
-  the Makefile.PL command line and/or editing the Makefile.PL.
-
-  You should not need to make any changes. If you do *please* let me
-  know so that I can try to make it automatic in a later release.
-
-  This software is supported via the dbi-users mailing list.  For more
-  information and to keep informed about progress you can join the
-  mailing list via http://dbi.perl.org (if you are unable to use the
-  web you can subscribe by sending a message to
-  dbi-users-subscribe@perl.org.
-
-  Please post details of any problems (or changes you needed to make)
-  to dbi-users@perl.org. But note...
-
-  ** IT IS IMPORTANT TO INCLUDE THE FOLLOWING INFORMATION:
-
-  1. A complete log of a all steps of the build, e.g.:
-
-    perl Makefile.PL           (do a make realclean first)
-
-    make
-
-    make test
-
-    make test TEST_VERBOSE=1   (if any tests fail)
-
-  2. Full details of which software you are using, including:
-
-    Perl version (the output of perl -V)
-
-    ODBC Driver and version
-
-    ODBC Driver manager used and version
-
-  It is important to check that you are using the latest version
-  before posting. If you're not then I'm *very* likely to simply say
-  "upgrade to the latest". You would do yourself a favour by upgrading
-  beforehand.
-
-  Please remember that I'm _very_ busy. Try to help yourself first,
-  then try to help me help you by following these guidelines
-  carefully.
-
-  Regards,
-  Tim, Jeff and Martin.
+The original DBD::ODBC README by Tim Bunce, Jeff Urlwin, and Martin J. Evans is
+preserved unchanged at [README.upstream.md](README.upstream.md) (and
+[README](README)). Feedback, bug reports, and corrections are always welcome.
